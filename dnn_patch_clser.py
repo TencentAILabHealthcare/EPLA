@@ -1,42 +1,45 @@
 #!/usr/bin/env python
 # encoding: utf-8
-'''
+"""
 @time: 2020/9/22 10:27
 @authors: Fan Yang
-@copywrite: Tencent
-'''
-
-import torch
-import torch.nn as nn
-import numpy as np
-from torchvision import models, transforms
+@copywriter: Tencent
+"""
 
 import os
 import time
 import logging
 import argparse
-import pandas as pd
 from glob import glob
+import torch
+import torch.nn as nn
+import numpy as np
+from torchvision import models, transforms
+import pandas as pd
 from PIL import Image
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--model_folder', default='.')
-parser.add_argument('--test_data_search_path', default='.')
-parser.add_argument('--gt_table', default='gt_tbl.csv')
+parser.add_argument('--model_folder', default='./models')
+parser.add_argument('--result_folder', default='./results')
+parser.add_argument('--test_data_search_path', default='./data')
+parser.add_argument('--gt_table', default='./gt_tbl.csv')
 parser.add_argument('--model_name', default='dnnPatchClser.pt')
 
 args = parser.parse_args()
 
 model_folder = args.model_folder
+result_folder = args.result_folder
 test_data_search_path = args.test_data_search_path
 gt_table = args.gt_table
 model_path = os.path.join(model_folder, args.model_name)
+os.makedirs(result_folder, exist_ok=True)
 
 NUM_WORKERS = 1
 taskConfig = dict()
 taskConfig['batch_size'] = 4
 
 os.environ['TORCH_HOME'] = ''
+
 
 def set_log(logfileName='./dgLog.log', level=logging.INFO):
     logging.basicConfig(
@@ -46,9 +49,9 @@ def set_log(logfileName='./dgLog.log', level=logging.INFO):
             logging.StreamHandler()
         ])
 
+
 torch.manual_seed(823)
 np.random.seed(823)
-
 
 data_transforms = {
     'test': transforms.Compose([
@@ -59,24 +62,22 @@ data_transforms = {
     ])
 }
 
-if not os.path.exists(model_folder):
-    os.mkdir(model_folder)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 
 class TCGADataSet():
     def __init__(self):
-
-        gt_tbl_csv = os.path.join(model_folder, gt_table)
+        gt_tbl_csv = gt_table
 
         gt_tbl_updated = pd.read_csv(gt_tbl_csv)
 
         self.gt_tbl_updated = gt_tbl_updated
 
-    def prepPatchGTTbl(self):
-        ''' gt_tbl_patch:
+    def prepare_patch_gttbl(self):
+        """ gt_tbl_patch:
             Patient_ID: image path
             Sample.ID: common column to merge two tables
-        '''
+        """
         test_image_fullpath = glob(
             test_data_search_path.rstrip(os.sep) + os.sep + '*.png')
         print(test_image_fullpath)
@@ -84,25 +85,25 @@ class TCGADataSet():
         gt_tbl_patch = pd.DataFrame(
             {'Patch.ID': np.unique(np.array(test_image_fullpath))})
 
-        gt_tbl_patch['Sample.ID'] = gt_tbl_patch['Patch.ID'].apply(lambda x: str(os.path.basename(x))[
-                                                                             : 15])
+        gt_tbl_patch['Sample.ID'] = gt_tbl_patch['Patch.ID'].apply(lambda x: str(os.path.basename(x))[:15])
         print('Extract sample ID from patch ID, as following...')
         print(gt_tbl_patch.head(3))
-        gt_tbl_patch = gt_tbl_patch.merge(self.gt_tbl_updated, how='inner', on=[
-            'Sample.ID'])
+        gt_tbl_patch = gt_tbl_patch.merge(self.gt_tbl_updated, how='inner', on=['Sample.ID'])
         print(gt_tbl_patch.head(10))
         print(gt_tbl_patch.tail(10))
 
         return gt_tbl_patch
 
+
 tcgaDS = TCGADataSet()
-gt_tbl_patch = tcgaDS.prepPatchGTTbl()
+gt_tbl_patch = tcgaDS.prepare_patch_gttbl()
+
 
 class DatasetMSI(torch.utils.data.Dataset):
 
     def __init__(self, summarize_tbl, transform=None):
-        ''' dataset class for loader and iterator, noted the format of image is NCWH
-        '''
+        """ dataset class for loader and iterator, noted the format of image is NCWH
+        """
         self.data = summarize_tbl
         self.transform = transform
 
@@ -126,8 +127,9 @@ class DatasetMSI(torch.utils.data.Dataset):
         image_base_name = str(os.path.basename(image_name))
         return image, image_base_name
 
+
 def predict(model, dataloaders):
-    '''return predict_DF_set with Sample.ID, PScore, x, y'''
+    """return predict_DF_set with Sample.ID, PScore, x, y"""
     since = time.time()
     was_training = model.training
     model.eval()
@@ -135,7 +137,6 @@ def predict(model, dataloaders):
 
     logging.info('start predict on')
     for i, (inputs, patch_name) in enumerate(dataloaders['test']):
-
         logging.debug(inputs)
         logging.debug('inputs {:} size = {:}'.format(
             type(inputs), inputs.shape))
@@ -174,6 +175,7 @@ def predict(model, dataloaders):
     logging.info('Done')
     return predict_DF_set
 
+
 def build_model_on(device):
     model_ft = models.resnet18(pretrained=False)
     num_ftrs = model_ft.fc.in_features
@@ -181,8 +183,8 @@ def build_model_on(device):
     model_ft = model_ft.to(device)
     return model_ft
 
-def prepIO():
 
+def prepare_io():
     image_datasets = {'test': DatasetMSI(gt_tbl_patch, data_transforms['test'])}
     dataset_sizes = {x: len(image_datasets[x]) for x in ['test']}
 
@@ -192,9 +194,9 @@ def prepIO():
 
     return dataloaders, dataset_sizes
 
-if __name__ == '__main__':
 
-    dataloaders, dataset_sizes = prepIO()
+if __name__ == '__main__':
+    dataloaders, dataset_sizes = prepare_io()
 
     model_ft = build_model_on(device)
 
@@ -203,11 +205,7 @@ if __name__ == '__main__':
 
     model_ft.load_state_dict(best_model_wts['model_state_dict'])
 
-    assert model_folder != ''
-
-    result_pd = os.path.join(model_folder, 'pred.csv')
+    result_pd = os.path.join(result_folder, 'pred.csv')
 
     predict_DF_set = predict(model_ft, dataloaders)
     predict_DF_set.to_csv(result_pd, encoding='utf-8', index=False)
-
-
